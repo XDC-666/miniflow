@@ -1,0 +1,47 @@
+{
+  "name": "条件分支示例：仓库体检",
+  "description": "拉取仓库数据 → condition 节点判断 star 数 → 按真/假走两条不同的分支",
+  "enabled": true,
+  "trigger": { "type": "manual" },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "name": "拉取仓库",
+      "params": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/nodejs/node"
+      }
+    },
+    {
+      "id": "check",
+      "type": "condition",
+      "name": "是否热门",
+      "params": {
+        "expression": "$json.data.stargazers_count > 50000"
+      }
+    },
+    {
+      "id": "hot",
+      "type": "llm",
+      "name": "热门项目点评",
+      "params": {
+        "prompt": "仓库 {{ $node.fetch.data.full_name }} 有 {{ $node.fetch.data.stargazers_count }} 个 star，主要语言是 {{ $node.fetch.data.language }}。请用一句话说明它为什么流行。",
+        "temperature": 0.6
+      }
+    },
+    {
+      "id": "cold",
+      "type": "template",
+      "name": "冷门项目输出",
+      "params": {
+        "template": "{{ $node.fetch.data.full_name }} 目前只有 {{ $node.fetch.data.stargazers_count }} 个 star，暂不重点推荐。"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "fetch", "to": "check" },
+    { "from": "check", "to": "hot", "condition": "$json.result === true" },
+    { "from": "check", "to": "cold", "condition": "$json.result === false" }
+  ]
+}

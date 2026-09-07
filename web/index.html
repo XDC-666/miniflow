@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MiniFlow · AI 工作流引擎</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e3e2dd;
+    --text: #2c2c2a;
+    --muted: #6b6a65;
+    --accent: #4f46c9;
+    --accent-soft: #eeedfe;
+    --ok: #1d9e75;
+    --ok-soft: #e1f5ee;
+    --err: #c0392b;
+    --err-soft: #fcebeb;
+    --skip-soft: #f1efe8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 99px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 13px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); border-radius: 6px;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { opacity: .9; }
+  button.danger { color: var(--err); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card > h2 {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: .6px;
+  }
+  .list { max-height: 62vh; overflow: auto; }
+  .item { padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .item:hover { background: #fafaf8; }
+  .item.active { background: var(--accent-soft); }
+  .item .name { font-weight: 500; }
+  .item .meta { font-size: 11px; color: var(--muted); }
+
+  .pane { padding: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  textarea {
+    width: 100%; min-height: 300px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.5; padding: 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: #fcfcfb; color: var(--text);
+    resize: vertical;
+  }
+  input[type="text"] {
+    font: inherit; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--panel); color: var(--text);
+  }
+  .hint { font-size: 12px; color: var(--muted); }
+  .err { color: var(--err); font-size: 12.5px; }
+
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 4px; }
+  .badge.success { background: var(--ok-soft); color: var(--ok); }
+  .badge.failed { background: var(--err-soft); color: var(--err); }
+  .badge.skipped { background: var(--skip-soft); color: var(--muted); }
+  .badge.running { background: var(--accent-soft); color: var(--accent); }
+
+  .node-result { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .node-result > .head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: #fafaf8; border-bottom: 1px solid var(--border);
+  }
+  .node-result > .head .t { font-weight: 500; }
+  .node-result > .head .d { font-size: 11px; color: var(--muted); margin-left: auto; }
+  pre {
+    margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+    overflow: auto; max-height: 320px; background: #fcfcfb;
+    font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+  }
+  details summary { cursor: pointer; padding: 8px 14px; font-size: 13px; color: var(--muted); }
+  .kv { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MiniFlow</h1>
+  <span class="sub">轻量级 AI 工作流引擎</span>
+  <span class="pill" id="status">连接中…</span>
+  <span class="spacer"></span>
+  <button id="btn-new">新建工作流</button>
+  <button id="btn-refresh">刷新</button>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>工作流</h2>
+      <div class="list" id="wf-list"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>节点速查</h2>
+      <div class="pane" id="node-ref"><span class="hint">加载中…</span></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2 id="editor-title">编辑器</h2>
+      <div class="pane">
+        <div class="row">
+          <button class="primary" id="btn-save">保存</button>
+          <button id="btn-run">运行</button>
+          <button id="btn-format">格式化 JSON</button>
+          <button class="danger" id="btn-delete">删除</button>
+          <span class="spacer"></span>
+          <span class="hint" id="save-state"></span>
+        </div>
+        <textarea id="editor" spellcheck="false"></textarea>
+        <div id="editor-error" class="err"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>执行结果</h2>
+      <div class="pane" id="run-panel">
+        <span class="hint">点击「运行」查看每个节点的输入与输出。</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { workflows: [], currentId: null, nodes: [] };
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function api(path, options) {
+  const res = await fetch(path, Object.assign({
+    headers: { "Content-Type": "application/json" }
+  }, options || {}));
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+  return data;
+}
+
+const TEMPLATE = {
+  name: "新工作流",
+  description: "在这里描述这个工作流做什么",
+  enabled: true,
+  trigger: { type: "manual" },
+  nodes: [
+    { id: "fetch", type: "http", name: "拉取数据", params: { method: "GET", url: "https://api.github.com/repos/facebook/react" } },
+    { id: "ask", type: "llm", name: "交给模型", params: { prompt: "用一句话介绍 {{ $node.fetch.data.full_name }}", temperature: 0.5 } }
+  ],
+  edges: [{ from: "fetch", to: "ask" }]
+};
+
+function renderList() {
+  const box = $("wf-list");
+  if (!state.workflows.length) {
+    box.innerHTML = '<div class="pane hint">还没有工作流，点右上角「新建工作流」。</div>';
+    return;
+  }
+  box.innerHTML = state.workflows.map((w) => {
+    const trigger = w.trigger.type === "schedule" ? "定时 " + (w.trigger.cron || "")
+      : w.trigger.type === "webhook" ? "Webhook /" + (w.trigger.path || "")
+      : "手动";
+    return '<div class="item' + (w.id === state.currentId ? " active" : "") + '" data-id="' + esc(w.id) + '">' +
+      '<div class="name">' + esc(w.name) + "</div>" +
+      '<div class="meta">' + esc(trigger) + (w.enabled ? "" : " · 已停用") + "</div></div>";
+  }).join("");
+  box.querySelectorAll(".item").forEach((el) => {
+    el.addEventListener("click", () => select(el.dataset.id));
+  });
+}
+
+function renderNodeRef() {
+  $("node-ref").innerHTML = state.nodes.map((n) =>
+    '<details><summary>' + esc(n.type) + " — " + esc(n.label) + "</summary>" +
+    '<div class="kv" style="padding:0 14px 10px">' + esc(n.description) +
+    "<pre>" + esc(JSON.stringify(n.example, null, 2)) + "</pre></div></details>"
+  ).join("");
+}
+
+function select(id) {
+  state.currentId = id;
+  const wf = state.workflows.find((w) => w.id === id);
+  $("editor-title").textContent = "编辑器 · " + (wf ? wf.name : "");
+  $("editor").value = wf ? JSON.stringify(wf, null, 2) : "";
+  $("editor-error").textContent = "";
+  $("save-state").textContent = "";
+  $("run-panel").innerHTML = '<span class="hint">点击「运行」查看每个节点的输入与输出。</span>';
+  renderList();
+}
+
+function renderRun(run) {
+  const head = '<div class="row"><span class="badge ' + esc(run.status) + '">' + esc(run.status) + "</span>" +
+    "<span class=\"kv\">" + esc(run.durationMs) + "ms · 触发：" + esc(run.trigger) + "</span></div>" +
+    (run.error ? '<div class="err">' + esc(run.error) + "</div>" : "");
+  const body = run.results.map((r) =>
+    '<div class="node-result"><div class="head">' +
+    '<span class="badge ' + esc(r.status) + '">' + esc(r.status) + "</span>" +
+    '<span class="t">' + esc(r.name) + "</span>" +
+    '<span class="kv">' + esc(r.type) + "</span>" +
+    '<span class="d">' + esc(r.durationMs) + "ms</span></div>" +
+    (r.error ? "<pre class=\"err\">" + esc(r.error) + "</pre>" : "") +
+    "<pre>" + esc(JSON.stringify(r.output, null, 2)) + "</pre></div>"
+  ).join("");
+  $("run-panel").innerHTML = head + body;
+}
+
+async function refresh() {
+  try {
+    const health = await api("/api/health");
+    $("status").textContent = "已连接" + (health.safeMode ? " · 安全模式" : "");
+  } catch { $("status").textContent = "未连接"; }
+
+  const wfData = await api("/api/workflows");
+  state.workflows = wfData.workflows;
+  if (!state.currentId && state.workflows.length) {
+    select(state.workflows[0].id);
+  } else {
+    renderList();
+  }
+
+  if (!state.nodes.length) {
+    state.nodes = (await api("/api/nodes")).nodes;
+    renderNodeRef();
+  }
+}
+
+$("btn-refresh").addEventListener("click", refresh);
+
+$("btn-new").addEventListener("click", async () => {
+  const created = await api("/api/workflows", { method: "POST", body: JSON.stringify(TEMPLATE) });
+  await refresh();
+  select(created.workflow.id);
+});
+
+$("btn-save").addEventListener("click", async () => {
+  if (!state.currentId) return;
+  let parsed;
+  try { parsed = JSON.parse($("editor").value); }
+  catch (e) { $("editor-error").textContent = "JSON 格式错误：" + e.message; return; }
+  try {
+    await api("/api/workflows/" + state.currentId, { method: "PUT", body: JSON.stringify(parsed) });
+    $("editor-error").textContent = "";
+    $("save-state").textContent = "已保存";
+    await refresh();
+    select(state.currentId);
+  } catch (e) { $("editor-error").textContent = e.message; }
+});
+
+$("btn-format").addEventListener("click", () => {
+  try { $("editor").value = JSON.stringify(JSON.parse($("editor").value), null, 2); $("editor-error").textContent = ""; }
+  catch (e) { $("editor-error").textContent = "JSON 格式错误：" + e.message; }
+});
+
+$("btn-delete").addEventListener("click", async () => {
+  if (!state.currentId || !confirm("确定删除这个工作流？")) return;
+  await api("/api/workflows/" + state.currentId, { method: "DELETE" });
+  state.currentId = null;
+  await refresh();
+});
+
+$("btn-run").addEventListener("click", async () => {
+  if (!state.currentId) return;
+  const btn = $("btn-run");
+  btn.disabled = true; btn.textContent = "运行中…";
+  $("run-panel").innerHTML = '<span class="hint">正在执行，请稍候…</span>';
+  try {
+    const data = await api("/api/workflows/" + state.currentId + "/run?wait=1", {
+      method: "POST", body: JSON.stringify({ payload: null })
+    });
+    renderRun(data.run);
+  } catch (e) {
+    $("run-panel").innerHTML = '<div class="err">运行失败：' + esc(e.message) + "</div>";
+  } finally {
+    btn.disabled = false; btn.textContent = "运行";
+  }
+});
+
+refresh().catch((e) => { $("status").textContent = "接口异常"; console.error(e); });
+</script>
+</body>
+</html>

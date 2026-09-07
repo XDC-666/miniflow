@@ -1,0 +1,21 @@
+{
+  "name": "AI 调研助手（Agent 工具调用）",
+  "description": "Agent 节点自主决定是否调用 http_request / current_time 工具，多轮推理后给出结论",
+  "enabled": true,
+  "trigger": { "type": "manual" },
+  "nodes": [
+    {
+      "id": "research",
+      "type": "agent",
+      "name": "联网调研",
+      "params": {
+        "system": "你是一个严谨的调研助手。先调用工具获取真实信息，再给出结论，并在结尾注明信息来源 URL。不要编造。",
+        "prompt": "请查一下当前 Node.js 的 LTS 版本号，以及它相比上一个 LTS 的主要变化，用 3 句话总结。",
+        "tools": ["http_request", "current_time"],
+        "maxIterations": 6,
+        "temperature": 0.2
+      }
+    }
+  ],
+  "edges": []
+}

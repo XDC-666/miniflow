@@ -1,0 +1,26 @@
+{
+  "name": "Hello HTTP（无需 API Key）",
+  "description": "零依赖入门示例：拉取仓库信息并用模板渲染成一句话。不需要任何模型密钥即可运行",
+  "enabled": true,
+  "trigger": { "type": "manual" },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "name": "拉取仓库信息",
+      "params": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/facebook/react"
+      }
+    },
+    {
+      "id": "render",
+      "type": "template",
+      "name": "渲染一句话总结",
+      "params": {
+        "template": "{{ $node.fetch.data.full_name }} 有 {{ $node.fetch.data.stargazers_count }} 个 star，主要语言 {{ $node.fetch.data.language }}。简介：{{ $node.fetch.data.description }}"
+      }
+    }
+  ],
+  "edges": [{ "from": "fetch", "to": "render" }]
+}

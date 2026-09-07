@@ -1,0 +1,51 @@
+{
+  "name": "miniflow",
+  "version": "0.1.0",
+  "description": "MiniFlow —— 用 JSON 定义 AI 工作流的轻量自动化引擎。内置 LLM / Agent 节点，单文件数据库，一条命令自部署",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "homepage": "https://github.com/XDC-666/miniflow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XDC-666/miniflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/XDC-666/miniflow/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "workflow",
+    "automation",
+    "ai",
+    "llm",
+    "agent",
+    "backend",
+    "nodejs",
+    "typescript",
+    "openai",
+    "n8n-alternative"
+  ],
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "croner": "^9.0.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

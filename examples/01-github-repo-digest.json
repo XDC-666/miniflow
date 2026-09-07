@@ -1,0 +1,30 @@
+{
+  "name": "GitHub 仓库 AI 摘要",
+  "description": "Webhook 触发，拉取指定仓库信息后用大模型生成中文摘要。访问 /api/webhook/repo-digest?repo=facebook/react 体验",
+  "enabled": true,
+  "trigger": { "type": "webhook", "path": "repo-digest" },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "name": "拉取仓库信息",
+      "params": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{{ $payload.query.repo || 'facebook/react' }}",
+        "headers": { "Accept": "application/vnd.github+json" }
+      }
+    },
+    {
+      "id": "summarize",
+      "type": "llm",
+      "name": "生成中文摘要",
+      "params": {
+        "system": "你是技术专栏编辑。只输出 JSON，字段为 summary（80 字以内中文摘要）和 highlights（3 条亮点，字符串数组）。",
+        "prompt": "仓库：{{ $node.fetch.data.full_name }}\n简介：{{ $node.fetch.data.description }}\nStar：{{ $node.fetch.data.stargazers_count }}\n语言：{{ $node.fetch.data.language }}\n\n请根据以上信息写摘要。",
+        "temperature": 0.4,
+        "json": true
+      }
+    }
+  ],
+  "edges": [{ "from": "fetch", "to": "summarize" }]
+}
