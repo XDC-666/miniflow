@@ -10,7 +10,7 @@
       "name": "拉取仓库信息",
       "params": {
         "method": "GET",
-        "url": "https://api.github.com/repos/facebook/react"
+        "url": "https://api.github.com/repos/react/react"
       }
     },
     {

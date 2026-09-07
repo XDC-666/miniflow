@@ -1,6 +1,6 @@
 {
   "name": "GitHub 仓库 AI 摘要",
-  "description": "Webhook 触发，拉取指定仓库信息后用大模型生成中文摘要。访问 /api/webhook/repo-digest?repo=facebook/react 体验",
+  "description": "Webhook 触发，拉取指定仓库信息后用大模型生成中文摘要。访问 /api/webhook/repo-digest?repo=react/react 体验",
   "enabled": true,
   "trigger": { "type": "webhook", "path": "repo-digest" },
   "nodes": [
@@ -10,7 +10,7 @@
       "name": "拉取仓库信息",
       "params": {
         "method": "GET",
-        "url": "https://api.github.com/repos/{{ $payload.query.repo || 'facebook/react' }}",
+        "url": "https://api.github.com/repos/{{ $payload.query.repo || 'react/react' }}",
         "headers": { "Accept": "application/vnd.github+json" }
       }
     },

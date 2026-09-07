@@ -6,7 +6,7 @@ registerNode({
   description: "发起 HTTP 请求，返回 { status, ok, headers, data }，data 会在响应是 JSON 时自动解析",
   example: {
     method: "GET",
-    url: "https://api.github.com/repos/facebook/react",
+    url: "https://api.github.com/repos/react/react",
     headers: { Accept: "application/vnd.github+json" },
   },
   async run({ params }) {

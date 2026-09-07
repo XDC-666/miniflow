@@ -179,7 +179,7 @@ curl -X POST "http://127.0.0.1:3000/api/workflows/wf_xxx/run?wait=1" \
 把 `trigger` 配成 `{"type":"webhook","path":"my-hook"}`，然后：
 
 ```bash
-curl "http://127.0.0.1:3000/api/webhook/my-hook?repo=facebook/react"
+curl "http://127.0.0.1:3000/api/webhook/my-hook?repo=react/react"
 ```
 
 工作流里用 `$payload.query`、`$payload.body`、`$payload.headers` 取数据。
