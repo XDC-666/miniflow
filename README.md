@@ -1,8 +1,8 @@
 # MiniFlow
 
 > 用 JSON 定义 AI 工作流的轻量自动化引擎。内置 LLM / Agent 节点，单文件数据库，一条命令自部署。
->
-> A lightweight AI workflow automation engine — define DAG workflows in JSON, with built-in LLM & Agent nodes.
+
+**🌐 [English](./README_EN.md) | 简体中文**
 
 ![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript)
@@ -49,7 +49,7 @@ cp .env.example .env      # 然后填入你的 OPENAI_API_KEY
 npm run dev
 ```
 
-打开 <http://127.0.0.1:3000> 即可看到控制台。首次启动会自动导入 `examples/` 下的三个示例工作流。
+打开 <http://127.0.0.1:3000> 即可看到控制台。首次启动会自动导入 `examples/` 下的示例工作流（含一个无需 API Key 的 `00-hello-http.json`）。
 
 ### 没有 API Key 也能玩
 
@@ -276,7 +276,7 @@ miniflow/
 │   ├── server.ts        # Fastify REST API
 │   └── index.ts         # 入口
 ├── web/index.html       # 零依赖单页控制台
-├── examples/            # 三个可直接导入的示例工作流
+├── examples/            # 可直接导入的示例工作流
 └── data/                # SQLite 数据库（自动生成，已 gitignore）
 ```
 
