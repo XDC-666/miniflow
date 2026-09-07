@@ -1,4 +1,5 @@
 import { registerNode } from "./registry.js";
+import { assertSafeUrl, MAX_RESPONSE_BYTES } from "../utils/url.js";
 
 registerNode({
   type: "http",
@@ -14,6 +15,7 @@ registerNode({
     if (typeof url !== "string" || !url) {
       throw new Error("http 节点缺少 url 参数");
     }
+    await assertSafeUrl(url); // SSRF 防护：拦截内网/元数据地址
 
     const method = String(params.method ?? "GET").toUpperCase();
     const headers: Record<string, string> = { ...(params.headers ?? {}) };
@@ -38,7 +40,13 @@ registerNode({
         body,
         signal: controller.signal,
       });
-      const text = await res.text();
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > MAX_RESPONSE_BYTES) {
+        throw new Error(
+          `响应体过大（${buf.byteLength} bytes，上限 ${MAX_RESPONSE_BYTES}）`,
+        );
+      }
+      const text = Buffer.from(buf).toString("utf-8");
       let data: unknown = text;
       try {
         data = JSON.parse(text);

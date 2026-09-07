@@ -246,13 +246,15 @@ Results are persisted per node as they finish, so even a failed run keeps every 
 
 ## 🔒 Security notes (please read)
 
-MiniFlow nodes can execute JavaScript and issue arbitrary HTTP requests — **it is effectively a programmable server**:
+MiniFlow nodes can execute JavaScript and make outbound HTTP requests — **it is effectively a programmable server**. Keep these in mind:
 
-1. **It binds to `127.0.0.1` by default.** Setting `HOST=0.0.0.0` exposes it to your network, where anyone could create a workflow and run arbitrary code.
-2. **`$env` is not exposed wholesale.** It only returns variables explicitly allow-listed in `MINIFLOW_EXPOSED_ENV` (empty by default). This prevents API keys from leaking into prompts or run logs — keep secrets in server-side env vars and let nodes read them directly.
-3. **Enable `MINIFLOW_SAFE_MODE=1` for multi-tenant setups.** This disables the `code` node and all `{{ }}` expression evaluation.
-4. **`.env` is git-ignored.** Verify no real key reaches the repo. If one does, overwriting the file is not enough — **revoke and regenerate** that key at the provider.
-5. **Webhook endpoints have no authentication.** Put a reverse proxy with auth in front if you expose them publicly.
+1. **Binds to `127.0.0.1` by default.** Setting `HOST=0.0.0.0` exposes it to your network, where anyone could create a workflow and run arbitrary code.
+2. **Expressions evaluate in an isolated sandbox.** `{{ }}` expressions run inside a `vm` context whose global object and injected data are wrapped in Proxies, so they cannot reach host objects like `process` / `require` / `global`, nor escape via the `.constructor` chain to read server-side env vars (covered by a test for `globalThis.constructor.constructor('return process')()`). Anyone who can create a workflow is still treated as trusted — **do not** expose the service to untrusted users.
+3. **HTTP nodes are SSRF-protected by default.** The `http` node and the agent's `http_request` tool block `localhost`, private ranges (`10/172.16-31/192.168`), link-local / cloud metadata (`169.254.169.254`), and `file://` and other non-public targets. You must explicitly allow internal hosts if needed.
+4. **`$env` only exposes allow-listed variables.** `$env.NAME` returns only variables listed in `MINIFLOW_EXPOSED_ENV` (empty by default). Keep secrets in server-side env vars and let nodes read them directly — never put them in expressions or logs.
+5. **Enable `MINIFLOW_SAFE_MODE=1` for multi-tenant / public setups.** This disables the `code` node and all `{{ }}` expression evaluation (only literals and static config remain).
+6. **`.env` is git-ignored.** Verify no real key reaches the repo. If one does, overwriting the file is not enough — **revoke and regenerate** that key at the provider.
+7. **Webhook endpoints have no authentication.** Put a reverse proxy with auth in front if you expose them publicly.
 
 ---
 

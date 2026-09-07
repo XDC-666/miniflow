@@ -4,6 +4,7 @@ import {
   type ToolDefinition,
 } from "../llm/client.js";
 import { registerNode } from "./registry.js";
+import { assertSafeUrl, MAX_RESPONSE_BYTES } from "../utils/url.js";
 
 /** 工具返回内容的长度上限，避免把超长网页塞爆上下文 */
 const MAX_TOOL_RESULT = 4000;
@@ -55,15 +56,22 @@ async function executeTool(name: string, rawArgs: string): Promise<string> {
   if (name === "http_request") {
     try {
       const method = String(args.method ?? "GET").toUpperCase();
+      await assertSafeUrl(String(args.url)); // SSRF 防护：拦截内网/元数据地址
       const res = await fetch(String(args.url), {
         method,
         body: args.body ? String(args.body) : undefined,
         headers: args.body ? { "content-type": "application/json" } : undefined,
       });
-      const text = await res.text();
+      const buf = await res.arrayBuffer();
+      let bodyText: string;
+      if (buf.byteLength > MAX_RESPONSE_BYTES) {
+        bodyText = `(响应体超过 ${MAX_RESPONSE_BYTES} 字节上限，已截断)`;
+      } else {
+        bodyText = Buffer.from(buf).toString("utf-8");
+      }
       return JSON.stringify({
         status: res.status,
-        body: text.slice(0, MAX_TOOL_RESULT),
+        body: bodyText.slice(0, MAX_TOOL_RESULT),
       });
     } catch (err) {
       return `请求失败：${(err as Error).message}`;

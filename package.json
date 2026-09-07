@@ -20,7 +20,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "tsx --test \"test/*.test.ts\""
   },
   "keywords": [
     "workflow",
@@ -45,7 +45,6 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "typescript": "^5.7.2"
   }
 }
