@@ -92,6 +92,8 @@ export async function executeWorkflow(
 
   let status: RunRecord["status"] = "running";
   let errorMessage: string | undefined;
+  /** 是否有节点走了「容错继续」模式：失败被记录，但流程跑完 */
+  let anyFailed = false;
 
   for (const nodeId of order) {
     const node = nodeMap.get(nodeId) as Workflow["nodes"][number];
@@ -172,15 +174,27 @@ export async function executeWorkflow(
         error: message,
       };
       ctx.addResult(result);
-      status = "failed";
-      errorMessage = `节点 "${node.name ?? nodeId}" 执行失败：${message}`;
+
+      const label = node.name ?? nodeId;
+      if (!errorMessage) {
+        errorMessage = `节点 "${label}" 执行失败：${message}`;
+      }
+
+      if (node.params?.onError === "continue") {
+        // 容错模式：记录失败后继续跑其余分支。
+        // 该节点没有有效输出，因此不激活其下游（下游会被标记为 skipped）。
+        anyFailed = true;
+      } else {
+        status = "failed";
+      }
     }
 
     onProgress?.(result);
     if (status === "failed") break;
   }
 
-  if (status !== "failed") status = "success";
+  // 容错模式下流程会跑完，但只要有过失败，整体仍记为 failed
+  if (status !== "failed") status = anyFailed ? "failed" : "success";
   const endedAt = new Date().toISOString();
 
   return {

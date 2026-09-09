@@ -1,6 +1,6 @@
 {
   "name": "miniflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MiniFlow —— 用 JSON 定义 AI 工作流的轻量自动化引擎。内置 LLM / Agent 节点，单文件数据库，一条命令自部署",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test \"test/*.test.ts\""
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "tsx --test \"test/*.test.ts\"",
+    "verify": "npm run typecheck && npm test"
   },
   "keywords": [
     "workflow",

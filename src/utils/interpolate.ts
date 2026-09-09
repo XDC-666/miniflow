@@ -95,44 +95,40 @@ function sandboxGuard(value: unknown): unknown {
   });
 }
 
-// 仅暴露安全的全局（新 realm 内置，无法触及宿主 process）
-const SAFE_GLOBALS: Record<string, unknown> = {
-  JSON,
-  Math,
-  Date,
-  Array,
-  Object,
-  String,
-  Number,
-  Boolean,
-  RegExp,
-  Map,
-  Set,
-  Symbol,
-  parseInt,
-  parseFloat,
-  isNaN,
-  isFinite,
-  encodeURIComponent,
-  decodeURIComponent,
-  Error,
-  TypeError,
-  RangeError,
-  // 空实现的 console，避免表达式日志污染宿主 stdout，也杜绝信息外泄
-  console: {
-    log() {},
-    warn() {},
-    error() {},
-    info() {},
-  },
-};
+/**
+ * 注入沙箱的「标准内置对象」必须来自【一个全新的 realm】，绝不能直接用宿主的。
+ *
+ * 原因（真实逃逸案例）：`Date` / `Object` / `Promise` 在宿主里都是「函数对象」，
+ * 而函数的 `.constructor` 就是宿主的 `Function` 构造器，于是
+ *   `Date.constructor('return process')().env.OPENAI_API_KEY`
+ * 可以直接造出宿主函数、读到全部环境变量 —— Proxy 只包住了全局对象本身，
+ * 管不到这些内置对象身上的 `.constructor`，此路绕过了所有拦截。
+ *
+ * 新 realm 的内置对象，其 `.constructor` 指向【新 realm 的 Function】，
+ * 在新 realm 里 `process` 根本不存在，因此逃逸链断在这里。
+ */
+const REALM_GLOBALS: Record<string, unknown> = (() => {
+  const probe = createContext({});
+  return new Script(
+    `({JSON,Math,Date,Array,Object,String,Number,Boolean,RegExp,Map,Set,Symbol,` +
+      `Promise,BigInt,parseInt,parseFloat,isNaN,isFinite,` +
+      `encodeURIComponent,decodeURIComponent,URIError,` +
+      `Error,TypeError,RangeError,SyntaxError,EvalError})`,
+  ).runInContext(probe) as Record<string, unknown>;
+})();
+
+/**
+ * 沙箱内的 console 空实现：避免表达式/节点日志污染宿主 stdout，也杜绝信息外泄。
+ * 定义在包装函数体内（新 realm 中构造），而不是把宿主的 console 对象塞进去。
+ */
+const CONSOLE_SHIM = `const console={log(){},warn(){},error(){},info(){},debug(){},trace(){}};`;
 
 /**
  * 用 Proxy 包裹全局对象，拦截逃逸属性与危险全局标识符，
  * 让 expressions 拿不到宿主 realm 的任何对象。
  */
 function makeContext(guarded: Record<string, unknown>): Context {
-  const target: Record<string, unknown> = { ...SAFE_GLOBALS, ...guarded };
+  const target: Record<string, unknown> = { ...REALM_GLOBALS, ...guarded };
   const proxy = new Proxy(target, {
     get(t, prop, receiver) {
       const key = String(prop);
@@ -154,6 +150,15 @@ function makeContext(guarded: Record<string, unknown>): Context {
   return createContext(proxy);
 }
 
+/** 构造隔离上下文：注入数据先经 sandboxGuard 包裹，再交给 Proxy 全局 */
+function buildContext(scope: Record<string, unknown>): Context {
+  const guarded: Record<string, unknown> = {};
+  for (const k of Object.keys(scope)) {
+    guarded[k] = sandboxGuard(scope[k]);
+  }
+  return makeContext(guarded);
+}
+
 /** 在隔离沙箱中求值一段 JS 表达式 */
 export function evaluateExpression(
   expr: string,
@@ -164,20 +169,83 @@ export function evaluateExpression(
       "已启用 MINIFLOW_SAFE_MODE，表达式求值被禁用：" + expr.trim(),
     );
   }
-  const guarded: Record<string, unknown> = {};
-  for (const k of Object.keys(scope)) {
-    guarded[k] = sandboxGuard(scope[k]);
-  }
-  const context = makeContext(guarded);
+  const context = buildContext(scope);
   try {
-    // "use strict" + IIFE：表达式内的 `this` 不指向宿主对象
-    const script = new Script(`"use strict"; (() => (${expr}))()`);
+    // "use strict" + IIFE：表达式内的 `this` 不指向宿主对象；console 用空实现遮蔽
+    const script = new Script(
+      `"use strict"; (function(){ ${CONSOLE_SHIM}\n return (${expr}); })()`,
+    );
     return script.runInContext(context, { timeout: 200 });
   } catch (err) {
     throw new Error(
       `表达式 "{{ ${expr} }}" 求值失败：${(err as Error).message}`,
     );
   }
+}
+
+/**
+ * code 节点的执行超时（毫秒）。
+ * code 节点跑在主线程，若没有超时，一句 `while(true){}` 就会占满事件循环，
+ * 导致整个服务失去响应（连 /api/health 都不回）。因此必须有硬超时。
+ */
+export function codeTimeoutMs(): number {
+  const n = Number(process.env.MINIFLOW_CODE_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 5_000;
+}
+
+/**
+ * 在沙箱中执行一段 JS 代码体（支持 `return`，也支持 async 返回 Promise）。
+ *
+ * 双层超时：
+ *  1) vm 的 `timeout` 中断同步死循环（这是 new Function 做不到的）；
+ *  2) 若代码返回 Promise，再套一层 Promise.race，
+ *     避免 await 一个永不 resolve 的 Promise 把流程永久挂住。
+ *
+ * 与表达式共用同一套 Proxy 沙箱，因此拿不到 process / require 等宿主对象。
+ */
+export async function runSandboxedCode(
+  code: string,
+  scope: Record<string, unknown>,
+  timeoutMs: number = codeTimeoutMs(),
+): Promise<unknown> {
+  if (SAFE_MODE) {
+    throw new Error("已启用 MINIFLOW_SAFE_MODE，code 节点被禁用");
+  }
+
+  const context = buildContext(scope);
+  let result: unknown;
+  try {
+    // 包成 async 函数，支持顶层 await；返回值一律是 Promise，由下面的 race 接超时
+    const script = new Script(
+      `"use strict"; (async function(){ ${CONSOLE_SHIM}\n${code}\n})()`,
+    );
+    result = script.runInContext(context, { timeout: timeoutMs });
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    if (/timed out/i.test(message)) {
+      throw new Error(`代码执行超时（${timeoutMs}ms），已中断`);
+    }
+    throw new Error(`代码执行失败：${message}`);
+  }
+
+  const thenable = result as PromiseLike<unknown> | null;
+  if (thenable && typeof (thenable as { then?: unknown }).then === "function") {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve(thenable),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`代码执行超时（${timeoutMs}ms），已中断`)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return result;
 }
 
 function stringify(value: unknown): string {

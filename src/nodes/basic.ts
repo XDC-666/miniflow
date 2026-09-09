@@ -1,6 +1,8 @@
 import {
   assertCodeAllowed,
+  codeTimeoutMs,
   evaluateExpression,
+  runSandboxedCode,
 } from "../utils/interpolate.js";
 import { registerNode } from "./registry.js";
 
@@ -32,7 +34,7 @@ registerNode({
   type: "code",
   label: "JavaScript 代码",
   description:
-    "执行一段 JS。可用变量：$input（上游数据）、$node（各节点输出）、$json（同 $input）。最后用 return 返回结果",
+    "执行一段 JS（沙箱内，默认 5s 超时）。可用变量：$input（上游数据）、$node（各节点输出）、$json（同 $input）。最后用 return 返回结果",
   example: {
     code: "return $input.items.slice(0, 5).map(i => i.title);",
   },
@@ -41,15 +43,14 @@ registerNode({
     const code = String(params.code ?? "");
     if (!code.trim()) throw new Error("code 节点缺少 code 参数");
 
+    // 只注入文档约定的三个变量：宿主 ctx 不进沙箱，避免成为逃逸通道。
+    // 沙箱提供硬超时，同步死循环与永不 resolve 的 Promise 都会被中断。
     const scope = ctx.scope(input);
-    const fn = new Function(
-      "$input",
-      "$json",
-      "$node",
-      "$ctx",
-      `"use strict";\n${code}\n//# sourceURL=miniflow-code`,
+    const result = await runSandboxedCode(
+      code,
+      { $input: input, $json: input, $node: scope.$node },
+      codeTimeoutMs(),
     );
-    const result = await fn(input, input, scope.$node, ctx);
     return result ?? null;
   },
 });

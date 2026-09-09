@@ -146,8 +146,35 @@ export class Store {
     return row ? (JSON.parse(row.record) as RunRecord) : null;
   }
 
-  clearRuns(): void {
-    this.db.prepare(`DELETE FROM runs`).run();
+  /** 清空运行记录；传 workflowId 则只清该工作流的 */
+  clearRuns(workflowId?: string): number {
+    const result = workflowId
+      ? this.db.prepare(`DELETE FROM runs WHERE workflow_id = ?`).run(workflowId)
+      : this.db.prepare(`DELETE FROM runs`).run();
+    return result.changes;
+  }
+
+  /**
+   * 保留每个工作流最近 keep 条运行记录，其余删除。
+   * 长期运行时 runs 表会持续增长（每条含完整节点输入输出），需要能定期瘦身。
+   */
+  pruneRuns(keep: number, workflowId?: string): number {
+    const limit = Math.max(1, Math.floor(keep) || 1);
+    const rows = workflowId
+      ? (this.db
+          .prepare(
+            `SELECT id FROM runs WHERE workflow_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET ?`,
+          )
+          .all(workflowId, limit) as { id: string }[])
+      : (this.db
+          .prepare(`SELECT id FROM runs ORDER BY created_at DESC LIMIT -1 OFFSET ?`)
+          .all(limit) as { id: string }[]);
+
+    if (rows.length === 0) return 0;
+    const del = this.db.prepare(`DELETE FROM runs WHERE id = ?`);
+    let removed = 0;
+    for (const { id } of rows) removed += del.run(id).changes;
+    return removed;
   }
 
   close(): void {

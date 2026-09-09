@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ export interface ServerOptions {
   onWorkflowsChanged?: () => void;
 }
 
-function bad(reply: any, message: string, code = 400) {
+function bad(reply: FastifyReply, message: string, code = 400) {
   return reply.code(code).send({ error: message });
 }
 
@@ -25,9 +25,24 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   const { store, onWorkflowsChanged } = opts;
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
 
+  // CORS 默认关闭。开启时优先按 MINIFLOW_CORS_ORIGINS 白名单回显来源；
+  // 未配置白名单才回退到 "*"（宽松模式，仅建议本地开发使用）。
+  const corsOrigins = (process.env.MINIFLOW_CORS_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   if (process.env.MINIFLOW_CORS === "1") {
     app.addHook("onRequest", async (req, reply) => {
-      reply.header("access-control-allow-origin", "*");
+      const origin = req.headers.origin as string | undefined;
+      if (corsOrigins.length > 0) {
+        if (origin && corsOrigins.includes(origin)) {
+          reply.header("access-control-allow-origin", origin);
+          reply.header("vary", "Origin");
+        }
+      } else {
+        reply.header("access-control-allow-origin", "*");
+      }
       reply.header("access-control-allow-headers", "content-type,authorization");
       reply.header("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
       if (req.method === "OPTIONS") return reply.code(204).send();
@@ -115,6 +130,28 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
     const { id } = req.params as { id: string };
     const run = store.getRun(id);
     return run ? { run } : bad(reply, "运行记录不存在", 404);
+  });
+
+  // ---------- 运行记录清理 ----------
+  // runs 表只增不减，长期运行会持续膨胀（每条含完整节点输入输出），
+  // 因此提供清理入口：?keep=N 保留最近 N 条，否则清空（可带 workflowId 限定）。
+  app.delete("/api/runs", async (req, reply) => {
+    const { workflowId, keep } = req.query as {
+      workflowId?: string;
+      keep?: string;
+    };
+
+    if (keep !== undefined) {
+      const n = Number(keep);
+      if (!Number.isFinite(n) || n < 1) {
+        return bad(reply, "keep 必须是正整数");
+      }
+      const removed = store.pruneRuns(n, workflowId);
+      return { removed, kept: n };
+    }
+
+    const removed = store.clearRuns(workflowId);
+    return { removed };
   });
 
   // ---------- Webhook 触发 ----------

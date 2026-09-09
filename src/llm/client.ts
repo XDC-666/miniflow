@@ -53,6 +53,15 @@ function defaultModel(): string {
   return process.env.LLM_MODEL || "gpt-4o-mini";
 }
 
+/**
+ * 模型请求超时（毫秒）。不设超时的话，模型服务假死会让整条工作流永久悬挂，
+ * 而 webhook 触发是同步等待 run 结束的，会连带把外部调用方一起挂住。
+ */
+function requestTimeoutMs(): number {
+  const n = Number(process.env.MINIFLOW_LLM_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 120_000;
+}
+
 export async function chat(opts: ChatOptions): Promise<ChatResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -79,6 +88,7 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
     body.tool_choice = opts.toolChoice ?? "auto";
   }
 
+  const timeoutMs = requestTimeoutMs();
   let res: Response;
   try {
     res = await fetch(url, {
@@ -88,8 +98,13 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    const name = (err as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new Error(`模型服务请求超时（${timeoutMs}ms）：${url}`);
+    }
     throw new Error(`无法连接模型服务 ${url}：${(err as Error).message}`);
   }
 

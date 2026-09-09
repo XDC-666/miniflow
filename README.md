@@ -8,6 +8,8 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Code size](https://img.shields.io/badge/core-%7E1500%20lines-blue)
+[![CI](https://github.com/XDC-666/miniflow/actions/workflows/ci.yml/badge.svg)](https://github.com/XDC-666/miniflow/actions/workflows/ci.yml)
+![Tests](https://img.shields.io/badge/tests-39%20passing-brightgreen)
 
 n8n 很强大，但它有几十万行代码、几十个服务依赖，想读懂或二次开发并不容易。
 **MiniFlow 想回答一个问题：一个能跑通「触发器 → HTTP → 大模型 → 条件分支」的自动化引擎，最少能写多短？**
@@ -75,6 +77,22 @@ curl -X POST http://127.0.0.1:3000/api/workflows \
 curl -X POST "http://127.0.0.1:3000/api/workflows/<上一步返回的 id>/run?wait=1" \
   -H "Content-Type: application/json" -d '{"payload":null}'
 ```
+
+---
+
+## ⚙️ 环境变量
+
+完整清单见 `.env.example`，常用的几个：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PORT` / `HOST` | `3000` / `127.0.0.1` | 监听地址。改 `0.0.0.0` 会暴露到局域网 |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `LLM_MODEL` | — | 模型服务，兼容 OpenAI 协议，换 base url 即换厂商 |
+| `MINIFLOW_CODE_TIMEOUT_MS` | `5000` | code 节点超时，防死循环占满主线程 |
+| `MINIFLOW_LLM_TIMEOUT_MS` | `120000` | 模型请求超时，防服务假死拖挂工作流 |
+| `MINIFLOW_SAFE_MODE` | `0` | 设为 `1` 禁用 code 节点与表达式求值 |
+| `MINIFLOW_EXPOSED_ENV` | 空 | 允许 `$env.XXX` 读取的变量白名单 |
+| `MINIFLOW_CORS` / `MINIFLOW_CORS_ORIGINS` | `0` / 空 | 跨域开关与来源白名单 |
 
 ---
 
@@ -152,11 +170,18 @@ curl -X POST "http://127.0.0.1:3000/api/workflows/<上一步返回的 id>/run?wa
 | `llm` | 调用一次大模型，支持 JSON 结构化输出 | `{ text, json, model, usage }` |
 | `agent` | ReAct 工具调用循环，最多 N 轮 | `{ text, steps, iterations, toolCalls }` |
 | `condition` | 求值表达式 | `{ result: boolean, value }` |
-| `code` | 执行一段 JS（可用 `$input` / `$node`） | 任意（由 `return` 决定） |
+| `code` | 在沙箱中执行一段 JS（可用 `$input` / `$json` / `$node`，支持顶层 `await`，默认 5s 超时） | 任意（由 `return` 决定） |
 | `template` | 渲染一段带占位的文本 | `{ text }` |
 | `delay` | 等待若干毫秒（上限 5 分钟） | `{ delayedMs }` |
 
 `agent` 节点内置工具：`http_request`（抓取网页 / 调接口）、`current_time`。
+
+**节点级容错**：默认任何节点失败都会中止整条工作流。给节点参数加上 `onError: "continue"`，
+该节点失败后流程会继续跑完其余分支（它的下游标记为 `skipped`，整体运行仍记为 `failed`）：
+
+```json
+{ "id": "fetch", "type": "http", "params": { "url": "https://...", "onError": "continue" } }
+```
 
 想加自己的节点？在 `src/nodes/` 下新建一个文件，调用 `registerNode({...})`，
 再到 `src/nodes/index.ts` 里 import 一次 —— API 和 UI 会自动识别它。
@@ -205,6 +230,7 @@ curl "http://127.0.0.1:3000/api/webhook/my-hook?repo=react/react"
 | POST | `/api/workflows/:id/run` | 运行（`?wait=1` 同步等待） |
 | GET | `/api/runs` | 运行记录（`?workflowId=&limit=`） |
 | GET | `/api/runs/:id` | 单条运行详情（含每个节点的输入输出） |
+| DELETE | `/api/runs` | 清理运行记录（`?keep=N` 保留最近 N 条，`?workflowId=` 限定工作流） |
 | ALL | `/api/webhook/:path` | Webhook 触发 |
 | GET | `/` | Web 控制台 |
 
@@ -250,17 +276,27 @@ flowchart TB
 MiniFlow 的节点可以执行 JS、对外发起 HTTP 请求，因此**它等价于一台可编程服务器**。请务必注意：
 
 1. **默认只监听 `127.0.0.1`**。`HOST=0.0.0.0` 会把服务暴露到局域网，任何人都能创建工作流并执行任意代码。
-2. **表达式在隔离沙箱中求值**。`{{ }}` 表达式运行在 `vm` 模块的隔离上下文里，全局对象与注入数据都被 Proxy 包裹，
-   无法访问 `process` / `require` / `global` 等宿主对象，也**无法通过 `.constructor` 链逃逸**读取服务端环境变量
-   （已用测试覆盖 `globalThis.constructor.constructor('return process')()` 这类手法）。能创建工作流的人仍视为「可信」，**不要**把服务暴露给不可信用户。
-3. **HTTP 节点默认防 SSRF**。`http` 节点与 agent 的 `http_request` 工具会拦截 `localhost`、私网（`10/172.16-31/192.168`）、
+2. **表达式与 code 节点都在隔离沙箱中求值**。`{{ }}` 表达式和 `code` 节点都运行在 `vm` 隔离上下文里，
+   全局对象与注入数据都被 Proxy 包裹，无法访问 `process` / `require` / `global` 等宿主对象，
+   也**无法通过 `.constructor` 链逃逸**读取服务端环境变量。
+   需要强调的是：沙箱注入的是**全新 realm** 的内置对象，而不是宿主的 —— 否则
+   `Date.constructor('return process')().env.OPENAI_API_KEY` 就能读到全部环境变量
+   （这是本项目真实踩过并修复的高危问题，现已用 25 个内置对象 × 2 条链的测试锁住）。
+   能创建工作流的人仍视为「可信」，**不要**把服务暴露给不可信用户。
+3. **执行有硬超时**。`code` 节点默认 5 秒（`MINIFLOW_CODE_TIMEOUT_MS`），同步死循环与永不 resolve 的 Promise
+   都会被中断；LLM 请求默认 120 秒（`MINIFLOW_LLM_TIMEOUT_MS`）。没有超时的话，模型服务假死或
+   一句 `while(true){}` 就会让整条工作流乃至整个服务失去响应。
+4. **HTTP 节点默认防 SSRF**。`http` 节点与 agent 的 `http_request` 工具会拦截 `localhost`、私网（`10/172.16-31/192.168`）、
    链路本地 / 云元数据（`169.254.169.254`）和 `file://` 等非公网地址，需显式放行内网才能访问。
-4. **`$env` 仅暴露白名单变量**。`$env.NAME` 只返回 `MINIFLOW_EXPOSED_ENV` 中列出的变量（默认为空），
+5. **`$env` 仅暴露白名单变量**。`$env.NAME` 只返回 `MINIFLOW_EXPOSED_ENV` 中列出的变量（默认为空），
    敏感密钥请放在服务端环境变量里，由节点自行读取，不要写进表达式或日志。
-5. **多租户 / 公开场景请开启 `MINIFLOW_SAFE_MODE=1`**，这会禁用 `code` 节点和所有 `{{ }}` 表达式求值（仅保留字面量与静态配置）。
-6. **`.env` 已在 `.gitignore` 中**。提交前请确认没有把真实密钥写进仓库；
+6. **多租户 / 公开场景请开启 `MINIFLOW_SAFE_MODE=1`**，这会禁用 `code` 节点和所有 `{{ }}` 表达式求值（仅保留字面量与静态配置）。
+7. **`.env` 已在 `.gitignore` 中**。提交前请确认没有把真实密钥写进仓库；
    如果发生过泄露，光覆盖文件是不够的 —— 去厂商后台**吊销并重新生成**该密钥。
-7. **Webhook 端点没有鉴权**。若要对公网开放，请在前面加一层反向代理鉴权。
+8. **Webhook 端点没有鉴权**。若要对公网开放，请在前面加一层反向代理鉴权。
+
+> 注意：`code` 节点运行在沙箱内，因此**不能使用 `require` / `process`**（可用 `$input` / `$json` / `$node`，
+> 并支持顶层 `await`）。需要 `require` 的逻辑请改成自定义节点。
 
 ---
 
@@ -276,10 +312,13 @@ miniflow/
 │   ├── nodes/           # 节点实现（新增节点放这里）
 │   ├── llm/             # OpenAI 兼容模型客户端
 │   ├── store/           # SQLite 持久化
+│   ├── utils/           # 插值沙箱、SSRF 校验
 │   ├── scheduler.ts     # Cron 定时调度
 │   ├── runner.ts        # 运行编排（同步 / 异步）
 │   ├── server.ts        # Fastify REST API
 │   └── index.ts         # 入口
+├── test/                # 测试（安全 / 引擎 / 存储 / 接口）
+├── .github/             # CI 与 Dependabot 配置
 ├── web/index.html       # 零依赖单页控制台
 ├── examples/            # 可直接导入的示例工作流
 └── data/                # SQLite 数据库（自动生成，已 gitignore）
@@ -287,9 +326,35 @@ miniflow/
 
 ---
 
+## 🧪 开发与测试
+
+```bash
+npm install
+npm run dev        # 热重载启动
+npm run verify     # 类型检查 + 全部测试（提交前必跑）
+npm test           # 只跑测试
+npm run typecheck  # 只做类型检查（覆盖 src/ 与 test/）
+```
+
+测试分四组，共 39 项：
+
+| 文件 | 覆盖内容 |
+|---|---|
+| `test/security.test.ts` | 沙箱逃逸（含 25 个内置对象 × 2 条 constructor 链）、`process.env` 不可达、SSRF 拦截、code 节点超时 |
+| `test/engine.test.ts` | 拓扑排序、条件分支、跳过语义、失败中断、`onError: continue` 容错、payload 传递 |
+| `test/store.test.ts` | 工作流 CRUD、运行记录与 limit 边界、清理与瘦身 |
+| `test/api.test.ts` | 各 REST 接口的状态码与校验（用 `fastify.inject`） |
+
+改动沙箱 / SSRF / 表达式相关代码时，安全用例是**硬性闸门**。
+详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+---
+
 ## 🗺️ 路线图
 
-- [ ] 节点级失败重试与超时配置
+- [x] 执行超时（code 节点 5s / LLM 请求 120s）
+- [x] 节点级容错 `onError: continue`（失败不中断整条流程）
+- [ ] 节点级失败重试
 - [ ] 并行执行无依赖的分支
 - [ ] 拖拽式可视化编排（当前是 JSON 编辑）
 - [ ] 更多内置工具（`search_web`、`read_file`、数据库查询）

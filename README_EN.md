@@ -4,6 +4,7 @@
 >
 > 简体中文版请见 [README.md](./README.md)
 
+[![CI](https://github.com/XDC-666/miniflow/actions/workflows/ci.yml/badge.svg)](https://github.com/XDC-666/miniflow/actions/workflows/ci.yml)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -204,6 +205,7 @@ The scheduler rebuilds jobs automatically whenever workflows change — no resta
 | POST | `/api/workflows/:id/run` | Run it (`?wait=1` to block) |
 | GET | `/api/runs` | Run history (`?workflowId=&limit=`) |
 | GET | `/api/runs/:id` | Run detail, including every node's I/O |
+| DELETE | `/api/runs` | Prune run history (`?keep=N` keeps the latest N, `?workflowId=` scopes it) |
 | ALL | `/api/webhook/:path` | Webhook trigger |
 | GET | `/` | Web console |
 
@@ -249,12 +251,15 @@ Results are persisted per node as they finish, so even a failed run keeps every 
 MiniFlow nodes can execute JavaScript and make outbound HTTP requests — **it is effectively a programmable server**. Keep these in mind:
 
 1. **Binds to `127.0.0.1` by default.** Setting `HOST=0.0.0.0` exposes it to your network, where anyone could create a workflow and run arbitrary code.
-2. **Expressions evaluate in an isolated sandbox.** `{{ }}` expressions run inside a `vm` context whose global object and injected data are wrapped in Proxies, so they cannot reach host objects like `process` / `require` / `global`, nor escape via the `.constructor` chain to read server-side env vars (covered by a test for `globalThis.constructor.constructor('return process')()`). Anyone who can create a workflow is still treated as trusted — **do not** expose the service to untrusted users.
-3. **HTTP nodes are SSRF-protected by default.** The `http` node and the agent's `http_request` tool block `localhost`, private ranges (`10/172.16-31/192.168`), link-local / cloud metadata (`169.254.169.254`), and `file://` and other non-public targets. You must explicitly allow internal hosts if needed.
-4. **`$env` only exposes allow-listed variables.** `$env.NAME` returns only variables listed in `MINIFLOW_EXPOSED_ENV` (empty by default). Keep secrets in server-side env vars and let nodes read them directly — never put them in expressions or logs.
-5. **Enable `MINIFLOW_SAFE_MODE=1` for multi-tenant / public setups.** This disables the `code` node and all `{{ }}` expression evaluation (only literals and static config remain).
-6. **`.env` is git-ignored.** Verify no real key reaches the repo. If one does, overwriting the file is not enough — **revoke and regenerate** that key at the provider.
-7. **Webhook endpoints have no authentication.** Put a reverse proxy with auth in front if you expose them publicly.
+2. **Both expressions and the `code` node run in an isolated sandbox.** They execute inside a `vm` context whose global object and injected data are wrapped in Proxies, so they cannot reach host objects like `process` / `require` / `global`, nor escape via the `.constructor` chain. Importantly, the sandbox injects built-ins from a **fresh realm**, not the host's — otherwise `Date.constructor('return process')().env.OPENAI_API_KEY` would read every env var (a real high-severity bug this project hit and fixed; now locked down by tests over 25 built-ins × 2 chains). Anyone who can create a workflow is still treated as trusted — **do not** expose the service to untrusted users.
+3. **Execution has hard timeouts.** The `code` node defaults to 5s (`MINIFLOW_CODE_TIMEOUT_MS`); sync infinite loops and never-resolving promises are both interrupted. LLM requests default to 120s (`MINIFLOW_LLM_TIMEOUT_MS`). Without these, a hung model provider or a single `while(true){}` would stall the workflow — or the whole server.
+4. **HTTP nodes are SSRF-protected by default.** The `http` node and the agent's `http_request` tool block `localhost`, private ranges (`10/172.16-31/192.168`), link-local / cloud metadata (`169.254.169.254`), and `file://` and other non-public targets. You must explicitly allow internal hosts if needed.
+5. **`$env` only exposes allow-listed variables.** `$env.NAME` returns only variables listed in `MINIFLOW_EXPOSED_ENV` (empty by default). Keep secrets in server-side env vars and let nodes read them directly — never put them in expressions or logs.
+6. **Enable `MINIFLOW_SAFE_MODE=1` for multi-tenant / public setups.** This disables the `code` node and all `{{ }}` expression evaluation (only literals and static config remain).
+7. **`.env` is git-ignored.** Verify no real key reaches the repo. If one does, overwriting the file is not enough — **revoke and regenerate** that key at the provider.
+8. **Webhook endpoints have no authentication.** Put a reverse proxy with auth in front if you expose them publicly.
+
+> Note: the `code` node runs inside the sandbox, so it **cannot use `require` / `process`** (`$input` / `$json` / `$node` are available, and top-level `await` is supported). Move `require`-dependent logic into a custom node.
 
 ---
 
@@ -270,10 +275,13 @@ miniflow/
 │   ├── nodes/           # Node implementations (add yours here)
 │   ├── llm/             # OpenAI-compatible model client
 │   ├── store/           # SQLite persistence
+│   ├── utils/           # Interpolation sandbox, SSRF checks
 │   ├── scheduler.ts     # Cron scheduler
 │   ├── runner.ts        # Run orchestration (sync / async)
 │   ├── server.ts        # Fastify REST API
 │   └── index.ts         # Entry point
+├── test/                # Tests (security / engine / store / api)
+├── .github/             # CI and Dependabot config
 ├── web/index.html       # Dependency-free single-page console
 ├── examples/            # Importable example workflows
 └── data/                # SQLite database (auto-created, git-ignored)
@@ -281,9 +289,35 @@ miniflow/
 
 ---
 
+## 🧪 Development & tests
+
+```bash
+npm install
+npm run dev        # Start with hot reload
+npm run verify     # Typecheck + full test suite (run before committing)
+npm test           # Tests only
+npm run typecheck  # Typecheck only (covers src/ and test/)
+```
+
+39 tests across four files:
+
+| File | Covers |
+| --- | --- |
+| `test/security.test.ts` | Sandbox escapes (25 built-ins × 2 constructor chains), `process.env` unreachable, SSRF blocking, code-node timeouts |
+| `test/engine.test.ts` | Topological sort, conditional branching, skip semantics, fail-fast, `onError: continue`, payload passing |
+| `test/store.test.ts` | Workflow CRUD, run records and limit bounds, cleanup / pruning |
+| `test/api.test.ts` | REST endpoint status codes and validation (via `fastify.inject`) |
+
+When you touch sandbox / SSRF / expression code, the security tests are a **hard gate**.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+---
+
 ## 🗺️ Roadmap
 
-- [ ] Per-node retry and timeout configuration
+- [x] Execution timeouts (code node 5s / LLM requests 120s)
+- [x] Per-node fault tolerance via `onError: continue`
+- [ ] Per-node retry
 - [ ] Parallel execution of independent branches
 - [ ] Drag-and-drop visual editor (currently JSON editing)
 - [ ] More built-in tools (`search_web`, `read_file`, database queries)

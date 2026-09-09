@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,10 +11,18 @@ import { Store } from "./store/db.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(here, "..");
 
-/** 首次启动时把 examples/ 下的工作流导入数据库 */
-function seedExamples(store: Store): number {
+/**
+ * 首次启动时把 examples/ 下的工作流导入数据库。
+ *
+ * 用一个标记文件记录「已经导入过」：只按 name 去重的话，用户把示例改名后
+ * 下次启动又会被重新导入一遍。
+ */
+function seedExamples(store: Store, dataDir: string): number {
   const dir = join(rootDir, "examples");
   if (!existsSync(dir)) return 0;
+
+  const marker = join(dataDir, ".examples-seeded");
+  if (existsSync(marker)) return 0;
 
   const existing = new Set(store.listWorkflows().map((w) => w.name));
   let count = 0;
@@ -34,13 +42,19 @@ function seedExamples(store: Store): number {
       console.warn(`[seed] 跳过 ${file}：${(err as Error).message}`);
     }
   }
+
+  try {
+    writeFileSync(marker, new Date().toISOString(), "utf8");
+  } catch {
+    /* 标记写不进去也不影响运行，最多下次再试一次 */
+  }
   return count;
 }
 
 async function main(): Promise<void> {
   const dbFile = process.env.MINIFLOW_DB ?? join(rootDir, "data", "miniflow.db");
   const store = new Store(dbFile);
-  const seeded = seedExamples(store);
+  const seeded = seedExamples(store, dirname(dbFile));
 
   const scheduler = new Scheduler(store);
   const app = await createServer({
